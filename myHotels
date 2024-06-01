@@ -1,0 +1,175 @@
+import tkinter as tk
+from datetime import date, datetime
+from tkinter import ttk
+from tkinter import messagebox
+import pandas as pd
+from tkcalendar import Calendar
+from PIL import Image, ImageTk
+import requests
+from bs4 import BeautifulSoup
+import re
+
+
+def scrape_hotel_data(city, checkin_date, checkout_date):
+    url = f"https://www.booking.com/searchresults.html?ss={city}&ssne={city}&ssne_untouched={city}&efdco=1&label=gen173nr-1FCAEoggI46AdIM1gEaOQBiAEBmAExuAEHyAEP2AEB6AEBAECiAIBqAIDuAKo8sKxBsACAdICJGZlZWVmNGJjLWI2OGEtNGM0OS05ODk0LTM2ZGQ4YzkxYzY0MNgCBeACAQ&aid=304142&lang=en-us&sb=1&src_elem=sb&src=index&dest_id={city}&dest_type=city&checkin={checkin_date}&checkout={checkout_date}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    hotels = soup.findAll('div', {'data-testid': 'property-card'})
+    hotels_data = []
+
+    for hotel in hotels:
+        name_element = hotel.find('div', {'data-testid': 'title'})
+        name = name_element.text.strip() if name_element else "NOT GIVEN"
+
+        location_element = hotel.find('span', {'data-testid': 'address'})
+        location = location_element.text.strip() if location_element else "NOT GIVEN"
+
+        distance_element = hotel.find('span', {'data-testid': 'distance'})
+        distance = distance_element.text.strip() if distance_element else "NOT GIVEN"
+
+        price_element = hotel.find('span', {'data-testid': 'price-and-discounted-price'})
+        price_text = price_element.text.strip() if price_element else "NOT GIVEN"
+        price = re.sub(r"[^\d.,]", "", price_text) if price_text != "NOT GIVEN" else "NOT GIVEN"
+
+        rating_element = hotel.find('div', {'class': 'a3b8729ab1 d86cee9b25'})
+        rating = rating_element.find(text=True, recursive=False).strip() if rating_element else "NOT GIVEN"
+
+        hotels_data.append({
+            'Name': name,
+            'Location': location,
+            'Distance': distance,
+            'Price': price,
+            'Rating': rating
+        })
+
+    return hotels_data
+
+
+def select_date(entry):
+    def set_date():
+        selected_date = cal.get_date()
+        selected_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        today = date.today()
+        if selected_date < today:
+            messagebox.showerror("WARNING!!!", "You cannot select past dates.")
+            return
+        entry.delete(0, tk.END)
+        entry.insert(0, selected_date)
+        top.destroy()
+
+    top = tk.Toplevel(root)
+    cal = Calendar(top, date_pattern='yyyy-mm-dd')
+    cal.pack()
+
+    ok_button = ttk.Button(top, text="OK", command=set_date)
+    ok_button.pack()
+
+
+
+def search():
+    city = selected_city.get()
+    checkin_date = checkin_entry.get()
+    checkout_date = checkout_entry.get()
+    currency = "Euro" if currency_var.get() == 1 else "TL"
+
+    if checkout_date <= checkin_date:
+        messagebox.showerror("WARNING!!!", "Check-out date should be after check-in date of course :).")
+        return
+
+    hotels_data = scrape_hotel_data(city, checkin_date, checkout_date)
+
+    # sort hotels rating
+    hotels_data = sorted(hotels_data, key=lambda x: float(x['Rating']) if x['Rating'] != "NOT GIVEN" else 0,
+                         reverse=True)
+
+    # top 5 hotels
+    top_hotels_text.delete(1.0, tk.END)
+    for hotel in hotels_data[:5]:
+
+        price = hotel['Price']
+        price = price.replace(',', '')  # delete comma for convert
+        if currency == "Euro":
+            price = float(price) / 30  # curreny convert
+
+        top_hotels_text.insert(tk.END, f"{hotel['Name']}\n")
+        top_hotels_text.insert(tk.END, f"Address: {hotel['Location']}\n")
+        top_hotels_text.insert(tk.END, f"Distance to City Center: {hotel['Distance']}\n")
+        top_hotels_text.insert(tk.END, f"Price ({currency}): {price}\n")
+        top_hotels_text.insert(tk.END, f"Rating: {hotel['Rating']}\n\n")
+
+    hotels_df = pd.DataFrame(hotels_data)
+    hotels_df.to_csv('myhotels.csv', index=False)
+
+
+def select_city(city):
+    selected_city.set(city)
+
+
+# gui
+root = tk.Tk()
+root.title("Best Accomodation for You")
+root.configure(bg="lightblue")
+
+# image
+image_path = "acco.png"
+original_image = Image.open(image_path)
+resized_image = original_image.resize((175, 175))
+image = ImageTk.PhotoImage(resized_image)
+image_label = tk.Label(root, image=image, bg="lightblue")
+image_label.pack(side="left", padx=10, pady=10)
+
+image_label_right = tk.Label(root, image=image, bg="lightblue")
+image_label_right.pack(side="right", padx=10, pady=10)
+
+# city dropdown list
+cities = ["", "Vienna", "Budapest", "Prague", "Berlin", "London", "Milano", "Barcelona", "Bucharest", "Athens","Paris"]
+selected_city = tk.StringVar(root)
+selected_city.set(cities[0])
+city_label = tk.Label(root, text="Select a city:", bg="lightblue")
+city_label.pack()
+city_dropdown = ttk.OptionMenu(root, selected_city, *cities)
+city_dropdown.pack()
+
+# selected city
+selected_city_label = tk.Label(root, textvariable=selected_city, font=("Castellar", 12, "bold"), fg="blue", bg="white")
+selected_city_label.pack(pady=5)
+
+# check-in
+checkin_label = tk.Label(root, text="Check-in date:", bg="lightblue")
+checkin_label.pack()
+checkin_entry = tk.Entry(root)
+checkin_entry.pack()
+checkin_button = ttk.Button(root, text="Select Date", command=lambda: select_date(checkin_entry))
+checkin_button.pack()
+# check-out
+checkout_label = tk.Label(root, text="Check-out date:", bg="lightblue")
+checkout_label.pack()
+checkout_entry = tk.Entry(root)
+checkout_entry.pack()
+checkout_button = ttk.Button(root, text="Select Date", command=lambda: select_date(checkout_entry))
+checkout_button.pack()
+
+# currency selection
+currency_label = tk.Label(root, text="Select currency:", bg="cyan")
+currency_label.pack()
+currency_var = tk.IntVar()
+currency_var.set(2)
+euro_radio = tk.Radiobutton(root, text="Euro", variable=currency_var, value=1, bg="pink")
+euro_radio.pack()
+tl_radio = tk.Radiobutton(root, text="TL", variable=currency_var, value=2, bg="pink")
+tl_radio.pack()
+
+# search button
+search_button = ttk.Button(root, text="Search", command=search)
+search_button.pack()
+
+# gui top 5 hotels part
+top_hotels_label = tk.Label(root, text="Top 5 Hotels:", bg="lightblue")
+top_hotels_label.pack()
+top_hotels_text = tk.Text(root, height=20, width=50)
+top_hotels_text.pack()
+
+root.mainloop()
